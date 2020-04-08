@@ -37,13 +37,11 @@ class TPSA(metaclass=TPSA_meta):
         the value of a function or list of floats to specify
         the function value and derivatives up to some order
         '''
-        #value==sequence of floats
-        if isinstance(value,(list,set,tuple,np.ndarray)):
+        if isinstance(value,(list,tuple,np.ndarray)):
             if len(value)!=TPSA._ORDER+1:
                 raise ValueError(f"Input is length {len(value)}, should be {TPSA._ORDER+1}")
             else:
-                self.fx = np.array(value)
-        #value==float
+                self.fx = np.array(value).astype(float)
         elif isinstance(value,(int,float)):
             self.fx = np.zeros(TPSA._ORDER + 1)
             self.fx[0] = float(value)
@@ -54,7 +52,7 @@ class TPSA(metaclass=TPSA_meta):
     def __str__(self):
         return str(self.fx)
 
-
+    #Addition
     def __add__(self,other):
         '''self is first operand, other is second'''
         try:
@@ -68,6 +66,15 @@ class TPSA(metaclass=TPSA_meta):
         '''other is first operand, self is second'''
         return self.__add__(other)
 
+    def __iadd__(self, other):
+        try:
+            self.fx+=other.fx
+            return self
+        except AttributeError:
+            self.fx[0]+=other
+            return self
+
+    #Subtraction
     def __neg__(self):
         val=-self.fx
         return TPSA(val)
@@ -81,6 +88,7 @@ class TPSA(metaclass=TPSA_meta):
         temp=-self
         return temp.__add__(other)
 
+    #Multiplication
     def __mul__(self, other):
         try:
             length=len(self.fx)
@@ -90,7 +98,6 @@ class TPSA(metaclass=TPSA_meta):
                 temp[:j+1]=other.fx[j::-1]
                 val[j]+=np.einsum('i,i->',TPSA._binom_coeffs[j],
                         np.einsum('i,i->i',self.fx,temp))
-
             return TPSA(val)
         except AttributeError:
             temp=self.fx.copy()
@@ -100,5 +107,109 @@ class TPSA(metaclass=TPSA_meta):
     def __rmul__(self, other):
         return self.__mul__(other)
 
+    def __imul__(self, other):
+        try:
+            length=len(self.fx)
+            val=np.zeros(length)
+            for j in range(length):
+                temp=np.zeros(other.fx.shape)
+                temp[:j+1]=other.fx[j::-1]
+                val[j]+=np.einsum('i,i->',TPSA._binom_coeffs[j],
+                        np.einsum('i,i->i',self.fx,temp))
+            self.fx=val
+            return self
+        except AttributeError:
+            temp = self.fx.copy()
+            temp *= other
+            return TPSA(temp)
 
+    #Division
+    def __truediv__(self,other):
+        try:
+            temp=TPSA._series(other,inv=True)
+            temp+=1/other.fx[0]
+            return self*temp
+        except AttributeError:
+            temp = self.fx.copy()
+            temp *= 1/other
+            return TPSA(temp)
 
+    def __rtruediv__(self, other):
+        temp=TPSA._series(self,inv=True)
+        temp+=1/self.fx[0]
+        return other*temp
+
+    #Functions
+    @staticmethod
+    def _Taylor(trunc, alt=1):
+        '''Helper function used to compute exp and trig expansions'''
+        store = np.zeros(TPSA.order + 1)
+        store[1:] = trunc.fx[1:]
+        store = TPSA(store)
+        accumulate = 1
+        new = 1
+        for k in range(1, TPSA.order + 1):
+            accumulate *= store
+            new += (alt**(k//2) / np.math.factorial(k)) * accumulate
+        return new
+
+    @staticmethod
+    def _series(trunc,inv=False):
+        '''Helper function for natural log/inverse series'''
+        store = np.zeros(TPSA.order + 1)
+        store[1:] = trunc.fx[1:] / trunc.fx[0]
+        store = TPSA(store)
+        accumulate = 1
+        new = 0
+        for k in range(1, TPSA.order + 1):
+            accumulate *= store
+            if inv:
+                pre=((-1)**k)/trunc.fx[0]
+            else:
+                pre=(((-1)**(k + 1))/k)
+            new += pre * accumulate
+        return new
+
+    @staticmethod
+    def exp(trunc):
+        try:
+            pre=np.exp(trunc.fx[0])
+            new=TPSA._Taylor(trunc)
+            return pre*new
+        except AttributeError:
+            raise AttributeError("Function only accepts TPSA object")
+
+    @staticmethod
+    def sin(trunc):
+        try:
+            pre=[np.sin(trunc.fx[0]),np.cos(trunc.fx[0])]
+            new=TPSA._Taylor(trunc, alt=-1)
+            for i in range(2):
+                new.fx[i::2]*=pre[i]
+            return new
+        except AttributeError:
+            raise AttributeError("Function only accepts TPSA object")
+
+    @staticmethod
+    def cos(trunc):
+        try:
+            pre = [np.cos(trunc.fx[0]), -np.sin(trunc.fx[0])]
+            new = TPSA._Taylor(trunc, alt=-1)
+            for i in range(2):
+                new.fx[i::2] *= pre[i]
+            return new
+        except AttributeError:
+            raise AttributeError("Function only accepts TPSA object")
+
+    @staticmethod
+    def tan(trunc):
+        return TPSA.sin(trunc)/TPSA.cos(trunc)
+
+    @staticmethod
+    def ln(trunc):
+        try:
+            new = TPSA._series(trunc)
+            new += np.log(trunc.fx[0])
+            return new
+        except AttributeError:
+            raise AttributeError("Function only accepts TPSA object")
