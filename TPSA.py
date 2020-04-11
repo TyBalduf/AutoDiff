@@ -68,7 +68,7 @@ class TPSA(metaclass=TPSA_meta):
     def __add__(self,other):
         '''self is first operand, other is second'''
         try:
-            return TPSA(self._fx + other.fx, len(self._fx))
+            return TPSA(self._fx + other._fx)
         except AttributeError:
             temp=self._fx.copy()
             temp[0]+=other
@@ -151,8 +151,9 @@ class TPSA(metaclass=TPSA_meta):
     def __truediv__(self,other):
         '''Division done via expansion in _series function'''
         try:
-            temp=TPSA._series(other,inv=True)
-            temp+=1/other._fx[0]
+            factors=((-1)**(k+1)/other._fx[0] for k in range(TPSA.order))
+            temp=TPSA._series(other/other._fx[0],factors)
+            temp._fx[0]*=1/other._fx[0]
             return self*temp
         except AttributeError:
             temp = self._fx.copy()
@@ -160,56 +161,52 @@ class TPSA(metaclass=TPSA_meta):
             return TPSA(temp)
 
     def __rtruediv__(self, other):
-        temp=TPSA._series(self,inv=True)
-        temp+=1/self._fx[0]
+        factors = ((-1) ** (k + 1)/self._fx[0] for k in range(TPSA.order))
+        temp=TPSA._series(self/self._fx[0],factors)
+        temp._fx[0]*=1/self._fx[0]
         return other*temp
 
 
     #Functions
     @staticmethod
-    def _Taylor(trunc, alt=1):
-        '''Helper function used to compute exp and trig expansions'''
+    def _series(trunc,factors):
+        '''Helper function for natural log/inverse series'''
         store = np.zeros(TPSA.order + 1)
         store[1:] = trunc._fx[1:]
         store = TPSA(store)
         accumulate = 1
         new = 1
-        for k in range(1, TPSA.order + 1):
+        for f in factors:
             accumulate *= store
-            new += (alt**(k//2) / np.math.factorial(k)) * accumulate
-        return new
-
-    @staticmethod
-    def _series(trunc,inv=False):
-        '''Helper function for natural log/inverse series'''
-        store = np.zeros(TPSA.order + 1)
-        store[1:] = trunc._fx[1:] / trunc._fx[0]
-        store = TPSA(store)
-        accumulate = 1
-        new = 0
-        for k in range(1, TPSA.order + 1):
-            accumulate *= store
-            if inv:
-                pre=((-1)**k)/trunc._fx[0]
-            else:
-                pre=(((-1)**(k + 1))/k)
-            new += pre * accumulate
+            new += f * accumulate
         return new
 
     @staticmethod
     def exp(trunc):
         try:
+            factors=(1/(np.math.factorial(k+1)) for k in range(TPSA.order))
             pre=np.exp(trunc._fx[0])
-            new=TPSA._Taylor(trunc)
+            new=TPSA._series(trunc,factors)
             return pre*new
+        except AttributeError:
+            raise AttributeError("Function only accepts TPSA object")
+
+    @staticmethod
+    def ln(trunc):
+        try:
+            factors=((-1)**k/(k+1) for k in range(TPSA.order))
+            new = TPSA._series(trunc/trunc._fx[0],factors)
+            new._fx[0] *= np.log(trunc._fx[0])
+            return new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
 
     @staticmethod
     def sin(trunc):
         try:
+            factors=((-1)**((k+1)//2) / np.math.factorial(k+1) for k in range(TPSA.order))
             pre=[np.sin(trunc._fx[0]),np.cos(trunc._fx[0])]
-            new=TPSA._Taylor(trunc, alt=-1)
+            new=TPSA._series(trunc, factors)
             for i in range(2):
                 new._fx[i::2]*=pre[i]
             return new
@@ -219,8 +216,9 @@ class TPSA(metaclass=TPSA_meta):
     @staticmethod
     def cos(trunc):
         try:
+            factors = ((-1)**((k+1)// 2) / np.math.factorial(k+1) for k in range(TPSA.order))
             pre = [np.cos(trunc._fx[0]), -np.sin(trunc._fx[0])]
-            new = TPSA._Taylor(trunc, alt=-1)
+            new = TPSA._series(trunc, factors)
             for i in range(2):
                 new._fx[i::2] *= pre[i]
             return new
@@ -232,13 +230,16 @@ class TPSA(metaclass=TPSA_meta):
         return TPSA.sin(trunc)/TPSA.cos(trunc)
 
     @staticmethod
-    def ln(trunc):
-        try:
-            new = TPSA._series(trunc)
-            new += np.log(trunc._fx[0])
-            return new
-        except AttributeError:
-            raise AttributeError("Function only accepts TPSA object")
+    def sec(trunc):
+        return 1.0 / TPSA.cos(trunc)
+
+    @staticmethod
+    def csc(trunc):
+        return 1.0 / TPSA.sin(trunc)
+
+    @staticmethod
+    def cot(trunc):
+        return TPSA.cos(trunc) / TPSA.sin(trunc)
 
     @staticmethod
     def logistic(trunc,pow=1.0):
@@ -246,9 +247,8 @@ class TPSA(metaclass=TPSA_meta):
 
     @staticmethod
     def tanh(trunc):
-        pos=TPSA.exp(trunc)
-        neg=TPSA.exp(-trunc)
-        return (pos+neg)/(pos-neg)
+        temp=TPSA.exp(2*trunc)
+        return (temp-1)/(temp+1)
 
     @staticmethod
     def heaviside(trunc,smooth=10):

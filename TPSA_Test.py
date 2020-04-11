@@ -55,3 +55,10 @@ new[0]=15
 print(w)
 for i in w:
     print(i)
+
+TPSA.order=8
+b=TPSA(5)
+a=TPSA.ln(TPSA.tanh(b))
+print(f"b={b}")
+print(f"a=ln(tanh(b))={a}")
+print(a+b)
