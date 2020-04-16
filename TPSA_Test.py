@@ -12,7 +12,7 @@ print(f"x*-1={x**-1}")
 print()
 TPSA.order=3
 print(f"new order={TPSA.order}")
-y=TPSA([0,1,2,4])
+y=TPSA([0.0,1,2,4])
 print(f"y={y}")
 print(f"3*y={3*y}")
 
@@ -22,7 +22,7 @@ inv=y/3
 print(f"y/3={inv}")
 
 print()
-z=TPSA([3,1,0,0])
+z=TPSA([3.0,1,0,0])
 print(f"z={z}")
 inv=1/z
 print(f"1/z={inv}")
@@ -62,3 +62,11 @@ a=TPSA.ln(TPSA.tanh(b))
 print(f"b={b}")
 print(f"a=ln(tanh(b))={a}")
 print(a+b)
+
+orig=TPSA.cos(TPSA.cos(TPSA(math.e)))+TPSA(math.e)
+print(f"cos(cos(e))+e={orig}")
+delay=TPSA(TPSA.var)
+print(delay[0])
+A=TPSA.cos(TPSA.cos(TPSA(TPSA.var)))
+for func in A:
+    print(func)

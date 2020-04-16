@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.special as sp
+import DelegateFunc as df
 
 class TPSA_meta(type):
     '''Meta class allowing the truncation order to be changed at runtime'''
@@ -28,7 +29,17 @@ class TPSA(metaclass=TPSA_meta):
 
     _ORDER determines where to truncate, can reset with TPSA.order
     _binom_coeffs are computed when _ORDER is set, used in __mul__
+
+    Use var in a TPSA to differentiate functions rather than values
     '''
+
+    #Allow functions to be combined before being called
+    var=df.DelegateFunc(lambda x: x,'x')
+    _cosFunc=df.DelegateFunc(np.cos,'cos')
+    _sinFunc=df.DelegateFunc(np.sin,'sin')
+    _expFunc=df.DelegateFunc(np.exp,'exp')
+    _lnFunc=df.DelegateFunc(np.log,'ln')
+
 
     def __init__(self,value):
         '''Generate a truncated power-series
@@ -41,10 +52,14 @@ class TPSA(metaclass=TPSA_meta):
             if len(value)!=TPSA._ORDER+1:
                 raise ValueError(f"Input is length {len(value)}, should be {TPSA._ORDER+1}")
             else:
-                self._fx = np.array(value).astype(float)
+                self._fx = np.array(value)
         elif isinstance(value,(int,float)):
             self._fx = np.zeros(TPSA._ORDER + 1)
-            self._fx[0] = float(value)
+            self._fx[0] = value
+            self._fx[1] = 1.0
+        elif isinstance(value,df.DelegateFunc):
+            self._fx = np.zeros(TPSA._ORDER + 1,dtype=object)
+            self._fx[0] = value
             self._fx[1] = 1.0
         else:
             raise TypeError(f"Value is invalid type, must be list/tuple or single float")
@@ -55,7 +70,10 @@ class TPSA(metaclass=TPSA_meta):
         return str(self._fx)
 
     def __getitem__(self, item):
-        return self._fx[item].copy()
+        try:
+            return self._fx[item].copy()
+        except AttributeError:
+            return self._fx[item]
 
     #Comparison/equality
     def __eq__(self, other):
@@ -112,17 +130,24 @@ class TPSA(metaclass=TPSA_meta):
     def __mul__(self, other):
         try:
             length=len(self._fx)
-            val=np.zeros(length)
-            for j in range(length):
-                temp=np.zeros(other._fx.shape)
-                temp[:j+1]=other._fx[j::-1]
-                val[j]+=np.einsum('i,i->', TPSA._binom_coeffs[j],
-                                  np.einsum('i,i->i', self._fx, temp))
+            if self._fx.dtype==object or other._fx.dtype==object:
+                val=np.zeros(length,dtype=object)
+                for i in range(length):
+                    for j in range(i+1):
+                        val[i]+=TPSA._binom_coeffs[i][j]*self._fx[j]*other._fx[i-j]
+            else:
+                val=np.zeros(length)
+                for j in range(length):
+                    temp=np.zeros(other._fx.shape)
+                    temp[:j+1]=other._fx[j::-1]
+                    val[j]=np.einsum('i,i,i->',TPSA._binom_coeffs[j],self._fx,temp)
             return TPSA(val)
         except AttributeError:
             temp=self._fx.copy()
             temp*=other
             return TPSA(temp)
+
+
 
     def __rmul__(self, other):
         return self*other
@@ -130,18 +155,22 @@ class TPSA(metaclass=TPSA_meta):
     def __imul__(self, other):
         try:
             length=len(self._fx)
-            val=np.zeros(length)
-            for j in range(length):
-                temp=np.zeros(other._fx.shape)
-                temp[:j+1]=other._fx[j::-1]
-                val[j]+=np.einsum('i,i->', TPSA._binom_coeffs[j],
-                                  np.einsum('i,i->i', self._fx, temp))
+            if self._fx.dtype==object or other._fx.dtype==object:
+                val=np.zeros(length,dtype=object)
+                for i in range(length):
+                    for j in range(i+1):
+                        val[i]+=TPSA._binom_coeffs[i][j]*self._fx[j]*other._fx[i-j]
+            else:
+                val=np.zeros(length)
+                for j in range(length):
+                    temp=np.zeros(other._fx.shape)
+                    temp[:j+1]=other._fx[j::-1]
+                    val[j]=np.einsum('i,i,i->', TPSA._binom_coeffs[j], self._fx, temp)
             self._fx=val
             return self
         except AttributeError:
-            temp = self._fx.copy()
-            temp *= other
-            return TPSA(temp)
+            self._fx *= other
+            return self
 
     def __pow__(self, power, modulo=None):
         ##Should optimize integer power at some point
@@ -152,8 +181,7 @@ class TPSA(metaclass=TPSA_meta):
         '''Division done via expansion in _series function'''
         try:
             factors=((-1)**(k+1)/other._fx[0] for k in range(TPSA.order))
-            temp=TPSA._series(other/other._fx[0],factors)
-            temp._fx[0]*=1/other._fx[0]
+            temp=TPSA._series(other/other._fx[0],factors)+(1/other._fx[0])
             return self*temp
         except AttributeError:
             temp = self._fx.copy()
@@ -162,23 +190,34 @@ class TPSA(metaclass=TPSA_meta):
 
     def __rtruediv__(self, other):
         factors = ((-1) ** (k + 1)/self._fx[0] for k in range(TPSA.order))
-        temp=TPSA._series(self/self._fx[0],factors)
-        temp._fx[0]*=1/self._fx[0]
+        temp=TPSA._series(self/self._fx[0],factors)+(1/self._fx[0])
         return other*temp
 
 
     #Functions
     @staticmethod
     def _series(trunc,factors):
-        '''Helper function for natural log/inverse series'''
-        store = np.zeros(TPSA.order + 1)
+        '''Helper function to produce series
+        1. Raises power of trunc[:1], accumulates
+        2. At each step, adds factor[i]*accumulate to new
+        '''
+        if isinstance(trunc._fx[0],df.DelegateFunc):
+            store = np.zeros(TPSA.order + 1,dtype=object)
+            temp=np.zeros(TPSA.order+1,dtype=object)
+            new = TPSA(temp)
+            temp[0]=1.0
+            accumulate= TPSA(temp)
+        else:
+            store = np.zeros(TPSA.order + 1)
+            new=0
+            accumulate = 1
         store[1:] = trunc._fx[1:]
         store = TPSA(store)
-        accumulate = 1
-        new = 1
         for f in factors:
             accumulate *= store
-            new += f * accumulate
+            ##having accumulate first ensures TPSA.__mul__ used
+            ##rather than DelegateFunc.__mul__
+            new += accumulate*f
         return new
 
     @staticmethod
@@ -186,7 +225,7 @@ class TPSA(metaclass=TPSA_meta):
         try:
             factors=(1/(np.math.factorial(k+1)) for k in range(TPSA.order))
             pre=np.exp(trunc._fx[0])
-            new=TPSA._series(trunc,factors)
+            new=TPSA._series(trunc,factors)+1
             return pre*new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
@@ -195,8 +234,7 @@ class TPSA(metaclass=TPSA_meta):
     def ln(trunc):
         try:
             factors=((-1)**k/(k+1) for k in range(TPSA.order))
-            new = TPSA._series(trunc/trunc._fx[0],factors)
-            new._fx[0] *= np.log(trunc._fx[0])
+            new = TPSA._series(trunc/trunc._fx[0],factors)+np.log(trunc._fx[0])
             return new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
@@ -204,11 +242,9 @@ class TPSA(metaclass=TPSA_meta):
     @staticmethod
     def sin(trunc):
         try:
-            factors=((-1)**((k+1)//2) / np.math.factorial(k+1) for k in range(TPSA.order))
-            pre=[np.sin(trunc._fx[0]),np.cos(trunc._fx[0])]
-            new=TPSA._series(trunc, factors)
-            for i in range(2):
-                new._fx[i::2]*=pre[i]
+            pre = [TPSA._cosFunc(trunc._fx[0]), TPSA._sinFunc(trunc._fx[0])]
+            factors=(pre[k%2]*(-1)**((k+1)//2) * (1/np.math.factorial(k+1)) for k in range(TPSA.order))
+            new=TPSA._series(trunc, factors)+TPSA._sinFunc(trunc._fx[0])
             return new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
@@ -216,11 +252,9 @@ class TPSA(metaclass=TPSA_meta):
     @staticmethod
     def cos(trunc):
         try:
-            factors = ((-1)**((k+1)// 2) / np.math.factorial(k+1) for k in range(TPSA.order))
-            pre = [np.cos(trunc._fx[0]), -np.sin(trunc._fx[0])]
-            new = TPSA._series(trunc, factors)
-            for i in range(2):
-                new._fx[i::2] *= pre[i]
+            pre = [TPSA._sinFunc(trunc._fx[0]),TPSA._cosFunc(trunc._fx[0])]
+            factors = [pre[k%2]*(-1)**((k+2)// 2) * (1/np.math.factorial(k+1)) for k in range(TPSA.order)]
+            new = TPSA._series(trunc, factors)+TPSA._cosFunc(trunc._fx[0])
             return new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
@@ -251,5 +285,6 @@ class TPSA(metaclass=TPSA_meta):
         return (temp-1)/(temp+1)
 
     @staticmethod
-    def heaviside(trunc,smooth=10):
-        return TPSA.logistic(2*smooth*trunc)
+    def heaviside(trunc,sharp=10):
+        '''Larger sharp is better approximation'''
+        return TPSA.logistic(2*sharp*trunc)
