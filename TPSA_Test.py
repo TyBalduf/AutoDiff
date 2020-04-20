@@ -67,6 +67,16 @@ orig=TPSA.cos(TPSA.cos(TPSA(math.e)))+TPSA(math.e)
 print(f"cos(cos(e))+e={orig}")
 delay=TPSA(TPSA.var)
 print(delay[0])
-A=TPSA.cos(TPSA.cos(TPSA(TPSA.var)))
-for func in A:
-    print(func)
+# A=TPSA.cos(TPSA.cos(TPSA(TPSA.var)))
+# for func in A:
+#     print(func(math.pi+1))
+# B=TPSA.exp(-TPSA(TPSA.var))
+# print("Series for exp(-x)")
+# for func in B:
+#     print(func)
+# print("Series for ln(-x)")
+# C=TPSA.ln(-TPSA(TPSA.var))
+# for func in C:
+#     print(func)
+x=TPSA(1)
+print(x**-0.2)

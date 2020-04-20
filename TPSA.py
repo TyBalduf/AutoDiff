@@ -173,8 +173,18 @@ class TPSA(metaclass=TPSA_meta):
             return self
 
     def __pow__(self, power, modulo=None):
-        ##Should optimize integer power at some point
-        return TPSA.exp(power * TPSA.ln(self))
+        if isinstance(power,(int,float)):
+            factors=[]
+            acc=1
+            length=TPSA.order
+            if isinstance(power,int) and 0<power<TPSA.order:
+                length=power
+            for i in range(length):
+                acc*=(power-i)/(i+1)
+                factors.append(acc*self._fx[0]**(power-i))
+            return TPSA._series(self,factors)+self._fx[0]**power
+        else:
+            return TPSA.exp(power * TPSA.ln(self))
 
     #Division
     def __truediv__(self,other):
@@ -224,9 +234,9 @@ class TPSA(metaclass=TPSA_meta):
     def exp(trunc):
         try:
             factors=(1/(np.math.factorial(k+1)) for k in range(TPSA.order))
-            pre=np.exp(trunc._fx[0])
+            pre=TPSA._expFunc(trunc._fx[0])
             new=TPSA._series(trunc,factors)+1
-            return pre*new
+            return new*pre
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
 
@@ -234,7 +244,7 @@ class TPSA(metaclass=TPSA_meta):
     def ln(trunc):
         try:
             factors=((-1)**k/(k+1) for k in range(TPSA.order))
-            new = TPSA._series(trunc/trunc._fx[0],factors)+np.log(trunc._fx[0])
+            new = TPSA._series(trunc/trunc._fx[0],factors)+TPSA._lnFunc(trunc._fx[0])
             return new
         except AttributeError:
             raise AttributeError("Function only accepts TPSA object")
